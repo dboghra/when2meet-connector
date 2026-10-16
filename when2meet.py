@@ -1,25 +1,62 @@
-"""Print who has responded to a When2meet event, and how many people that is.
+"""Show who has responded to a When2meet event, and optionally wait until
+a list of people have all filled it out.
 
 Usage:
     python when2meet.py
     python when2meet.py "https://www.when2meet.com/?1234567-AbCde"
 """
 
+import ctypes
 import re
 import sys
+import time
+import winsound
 
 import requests
 
 # When2meet writes each responder into the page's JavaScript, like:
 #   PeopleNames[0] = 'Alice';PeopleIDs[0] = 1234567;
-NAME_PATTERN = re.compile(r"PeopleNames\[\d+\]\s*=\s*'(.*?)';")
+# The page includes this list more than once, so we key by the index number.
+NAME_PATTERN = re.compile(r"PeopleNames\[(\d+)\]\s*=\s*'(.*?)';")
+
+CHECK_EVERY_SECONDS = 60
 
 
 def get_names(url):
     """Download the When2meet page and return the list of responder names."""
     response = requests.get(url, timeout=15)
     response.raise_for_status()  # stop with an error if the page didn't load
-    return NAME_PATTERN.findall(response.text)
+    by_index = {int(i): name for i, name in NAME_PATTERN.findall(response.text)}
+    return [by_index[i] for i in sorted(by_index)]
+
+
+def normalize(name):
+    return name.strip().lower()
+
+
+def notify(message):
+    """Beep and pop up a Windows message box."""
+    print(message)
+    winsound.MessageBeep()
+    ctypes.windll.user32.MessageBoxW(0, message, "When2meet", 0x40)
+
+
+def wait_for_everyone(url, wanted):
+    """Check the page repeatedly until every wanted name has responded."""
+    print(f"Waiting for: {', '.join(wanted)}")
+    print(f"Checking every {CHECK_EVERY_SECONDS} seconds. Press Ctrl+C to stop.\n")
+    while True:
+        try:
+            responded = {normalize(n) for n in get_names(url)}
+        except requests.RequestException as error:
+            print(f"[{time.strftime('%H:%M:%S')}] Could not load page ({error}); retrying.")
+        else:
+            missing = [n for n in wanted if normalize(n) not in responded]
+            if not missing:
+                notify("Everyone has filled out the When2meet!")
+                return
+            print(f"[{time.strftime('%H:%M:%S')}] Still waiting on: {', '.join(missing)}")
+        time.sleep(CHECK_EVERY_SECONDS)
 
 
 def main():
@@ -41,7 +78,18 @@ def main():
 
     print(f"{len(names)} people responded:")
     for name in names:
-        print(f"  - {name}")
+        print(f"  - {name.strip()}")
+
+    answer = input(
+        "\nNames to wait for, separated by commas (or press Enter to skip): "
+    )
+    wanted = [n.strip() for n in answer.split(",") if n.strip()]
+    if wanted:
+        print()
+        try:
+            wait_for_everyone(url, wanted)
+        except KeyboardInterrupt:
+            print("\nStopped.")
 
 
 if __name__ == "__main__":
