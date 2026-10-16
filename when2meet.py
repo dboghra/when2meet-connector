@@ -7,10 +7,13 @@ Usage:
 """
 
 import ctypes
+import os
 import re
+import smtplib
 import sys
 import time
 import winsound
+from email.message import EmailMessage
 
 import requests
 
@@ -20,6 +23,7 @@ import requests
 NAME_PATTERN = re.compile(r"PeopleNames\[(\d+)\]\s*=\s*'(.*?)';")
 
 CHECK_EVERY_SECONDS = 60
+DEFAULT_RECIPIENT = "d.boghra@northeastern.edu"
 
 
 def get_names(url):
@@ -34,9 +38,38 @@ def normalize(name):
     return name.strip().lower()
 
 
+def send_email(subject, body):
+    """Email the alert. Settings come from environment variables:
+    EMAIL_USER and EMAIL_PASSWORD (required), EMAIL_SERVER, EMAIL_PORT and
+    EMAIL_TO (optional). Returns quietly if email isn't set up."""
+    user = os.environ.get("EMAIL_USER")
+    password = os.environ.get("EMAIL_PASSWORD")
+    if not user or not password:
+        print("(Email skipped: EMAIL_USER / EMAIL_PASSWORD not set.)")
+        return
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = user
+    message["To"] = os.environ.get("EMAIL_TO", DEFAULT_RECIPIENT)
+    message.set_content(body)
+
+    server = os.environ.get("EMAIL_SERVER", "smtp.office365.com")
+    port = int(os.environ.get("EMAIL_PORT", "587"))
+    try:
+        with smtplib.SMTP(server, port, timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(user, password)
+            smtp.send_message(message)
+        print(f"Email sent to {message['To']}.")
+    except (smtplib.SMTPException, OSError) as error:
+        print(f"Could not send email: {error}")
+
+
 def notify(message):
-    """Beep and pop up a Windows message box."""
+    """Email, beep, and pop up a Windows message box."""
     print(message)
+    send_email("When2meet: everyone has responded", message)
     winsound.MessageBeep()
     ctypes.windll.user32.MessageBoxW(0, message, "When2meet", 0x40)
 
@@ -90,7 +123,7 @@ def main():
             wait_for_everyone(url, wanted)
         except KeyboardInterrupt:
             print("\nStopped.")
-
+#jyza iyjp jyiv ochm
 
 if __name__ == "__main__":
     main()
